@@ -595,3 +595,162 @@ class LadderActionHandler {
 		}
 	}
 }
+
+class TeamsActionHandler {
+	const MAXPAGESIZE = 50;
+	/**
+	 * Fetches all published teams uploaded by the user (must be logged in).
+	 * Mandatory request args: page, pagesize: control the range of data that is returned.
+	 */
+	public function getuploadedteams($dispatcher, &$reqData, &$out) {
+		global $psdb, $teams, $curuser;
+
+		// A valid curuser array is needed
+		if (!@$curuser['loggedin'] || !@$curuser['userid']) {
+		   $out = 0;
+		   return;
+		}
+
+		$userid = $psdb->escape($curuser['userid']);
+		$pagesize = max(min(self::MAXPAGESIZE, intval(@$reqData['pagesize'])), 1);
+		$page = max(intval(@$reqData['page']), 0);
+
+		$res = $psdb->query(
+			"SELECT `teamid`, `teamname`, `format`, `packedteam`, `public` FROM `ntbb_teams` WHERE (`ownerid` = '$userid')"
+			. " ORDER BY `teamid` DESC LIMIT " . $page * $pagesize . "," . $pagesize
+		);
+		$out = array();
+		while($team = $psdb->fetch_assoc($res)) {
+			$out[] = $team;
+		}
+	}
+
+	/**
+	 * Fetches all teams shared with the user (must be logged in).
+	 * Mandatory request args: page, pagesize: control the range of data that is returned.
+	 */
+	public function getsharedteams($dispatcher, &$reqData, &$out) {
+	 	global $psdb, $teams, $curuser;
+
+		// A valid curuser array is needed
+		if (!@$curuser['loggedin'] || !@$curuser['userid']) {
+		   $out = 0;
+		   return;
+		}
+
+		$userid = $psdb->escape($curuser['userid']);
+		$pagesize = max(min(self::MAXPAGESIZE, intval(@$reqData['pagesize'])), 1);
+		$page = max(intval(@$reqData['page']), 0);
+
+		$res = $psdb->query(
+			"SELECT t.teamid, t.teamname, t.ownerid, t.format, t.packedteam, t.public FROM `ntbb_teams` `t`, `ntbb_sharelist` `s`"
+			. " WHERE t.teamid = s.teamid AND s.userid = '$userid'"
+			. " ORDER BY t.teamid DESC LIMIT " . $page * $pagesize . "," . $pagesize
+		);
+		$out = array();
+		while($team = $psdb->fetch_assoc($res)) {
+			$out[] = $team;
+		}
+	}
+
+	/**
+	 * Fetches all public teams.
+	 * Mandatory request args: page, pagesize: control the range of data that is returned.
+	 */
+
+	public function getpublicteams($dispatcher, &$reqData, &$out) {
+	 	global $psdb, $teams;
+
+		$pagesize = max(min(self::MAXPAGESIZE, intval(@$reqData['pagesize'])), 1);
+		$page = max(intval(@$reqData['page']), 0);
+
+		$res = $psdb->query(
+			"SELECT `teamid`, `teamname`, `ownerid`, `format`, `packedteam`, `public` FROM `ntbb_teams`"
+			. " WHERE `public` = 1"
+			. " ORDER BY `teamid` DESC LIMIT " . $page * $pagesize . "," . $pagesize
+		);
+		$out = array();
+		while($team = $psdb->fetch_assoc($res)) {
+			$out[] = $team;
+		}
+	}
+
+	/**
+	 * Uploads a new team. out is 0 for args error, 1 for duplicate, 2 for success.
+	 * Mandatory request args: userid, teamname, format, packedteam, public (int either 0 or 1)
+	 * Server only.
+	 */
+	public function uploadteam($dispatcher, &$reqData, &$out) {
+	 	global $psdb, $teams;
+
+		$server = $dispatcher->findServer();
+		if (!$server) {
+			$out['errorip'] = $dispatcher->getIp();
+			return;
+		}
+
+		$userid = $psdb->escape(@$reqData['userid']);
+		$teamname = $psdb->escape(@$reqData['teamname']);
+		$format = $psdb->escape(@$reqData['format']);
+		$packedteam = $psdb->escape(@$reqData['packedteam']);
+		$public = intval(@$reqData['public']);
+		if($public < 0 || $public > 1 || !$packedteam || !$format || !$teamname || !$userid) {
+			$out = 0;
+			return;
+		}
+
+		// search for dupes
+		$res = $psdb->query(
+			"SELECT COUNT(*) as count FROM `ntbb_teams` WHERE `packedteam` = ? AND `ownerid` = ?"
+			. " AND `format` = ? AND `public` = ?",
+			array($packedteam, $userid, $format, $public)
+		);
+		$count = $psdb->fetch_assoc($res)['count'];
+		if($count > 0) {
+			$out = 1;
+			return;
+		}
+		$psdb->query(
+			"INSERT INTO `ntbb_teams` (`ownerid`, `teamname`, `format`, `packedteam`, `public`) VALUES ('$userid', '$teamname', '$format', '$packedteam', $public)"
+		);
+		$out = 2;
+	}
+
+	/**
+	 * Shares a team with a player. 1 = user doesn't own the team. 2 = success.
+	 * Mandatory request args: ownerid: owner's id; teamid: team id; userid: user to share with
+	 * Server only.
+	 */
+	public function shareteam($dispatcher, &$reqData, &$out) {
+	 	global $psdb, $teams;
+
+		$server = $dispatcher->findServer();
+		if (!$server) {
+			$out['errorip'] = $dispatcher->getIp();
+			return;
+		}
+
+		$ownerid = $psdb->escape(@$reqData['ownerid']);
+		$teamid = $psdb->escape(@$reqData['teamid']);
+		$userid = $psdb->escape(@$reqData['userid']);
+		if(!$teamid || !$userid || !$ownerid) {
+			$out = 0;
+			return;
+		}
+
+		// make sure we own the team
+		$res = $psdb->query(
+			"SELECT COUNT(*) as count FROM `ntbb_teams` WHERE `teamid` = '$teamid' AND `ownerid` = '$ownerid'"
+		);
+		$count = $psdb->fetch_assoc($res)['count'];
+		if($count == 0) {
+			$out = 1;
+			return;
+		}
+		$psdb->query(
+			"INSERT INTO `ntbb_sharelist` (`teamid`, `userid`) VALUES ('$teamid', '$userid')"
+		);
+		$out = 2;
+	}
+
+}

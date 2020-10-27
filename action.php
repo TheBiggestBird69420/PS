@@ -34,6 +34,7 @@ include_once __DIR__ . '/lib/dispatcher.lib.php';
 
 $dispatcher = new ActionDispatcher(array(
 	new DefaultActionHandler(),
-	new LadderActionHandler()
+	new LadderActionHandler(),
+	new TeamsActionHandler()
 ));
 $dispatcher->executeActions();
